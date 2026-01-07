@@ -1,0 +1,20 @@
+FC=gfortran
+FFLAGS= -O1 -ffree-line-length-none -fdec-math
+PROJECT= DAD-drift_v1.0.exe
+
+SRC=constants_module.f90 data_module.f90 header_module.f90 file_module.f90 functions_module.f90 ascii_grid_module.f90 complex_functions_module.f90 \
+    read_input.f90 environment_initialisation.f90 application_initialisation.f90 droplet_model_allo.f90 droplet_model.f90 predict_drift_pattern.f90 \
+	landscape_drift.f90 drift_curve.f90 write_output.f90 main.f90
+
+OBJ=${SRC:.f90=.o}
+
+%.o: %.f90
+	$(FC) $(FFLAGS) -c -o $@ $<
+
+main: $(OBJ)
+	$(FC) $(FFLAGS) -static $(OBJ) -o $(PROJECT) 
+
+.PHONY: clean
+clean:
+	rm *.o *.mod #$(PROJECT)
+	

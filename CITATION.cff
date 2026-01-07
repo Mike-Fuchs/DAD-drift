@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Fuchs"
+  given-names: "Mike Devin"
+  orcid: "https://orcid.org/0009-0004-0790-9927"
+title: "DAD drift"
+version: 1.0
+doi: "10.5281/zenodo.11486371"
+date-released: "t.b.a."
+url: "https://github.com/Mike-Fuchs/DAD-drift"

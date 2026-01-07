@@ -1,0 +1,1 @@
+This README is here to prevent GitHub from hiding the "output"-folder, which is necessary for DAD drift to run properly.
