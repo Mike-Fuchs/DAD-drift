@@ -39,7 +39,7 @@ The **DAD-drift** model has been described and applied in the following peer-rev
   Environmental Research, 271.  
   [doi.org/10.1016/j.envres.2025.121104](https://doi.org/10.1016/j.envres.2025.121104)
 
-- **Landscape-level assessment of spray drift – A virtual experiment using the Droplet and Atmospheric Dispersion drift (DAD-drift) model.** 
+- **Landscape-level assessment of spray drift – A virtual experiment using the Droplet and Atmospheric Dispersion drift (DAD-drift) model.**  
   *Fuchs, M. D., Gebler, S., & Lorke, A. (2025).*  
   Environmental Modelling & Software, 189.  
   [doi.org/10.1016/j.envsoft.2025.106455](https://doi.org/10.1016/j.envsoft.2025.106455)
