@@ -1,11 +1,48 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
-authors:
-- family-names: "Fuchs"
-  given-names: "Mike Devin"
-  orcid: "https://orcid.org/0009-0004-0790-9927"
-title: "DAD drift"
-version: 1.0
+
+message: "If you use DAD-drift, please cite the software as below."
+
+title: "DAD-drift"
+version: 1.1
 doi: "10.5281/zenodo.11486371"
-date-released: "t.b.a."
+date-released: "2025-01-07"
 url: "https://github.com/Mike-Fuchs/DAD-drift"
+
+authors:
+  - family-names: "Fuchs"
+    given-names: "Mike Devin"
+    orcid: "https://orcid.org/0009-0004-0790-9927"
+
+references:
+  - type: article
+    title: "The droplet and atmospheric dispersion drift (DAD-drift) model – A modular approach for estimating spray drift at the landscape scale"
+    authors:
+      - family-names: "Fuchs"
+        given-names: "Mike Devin"
+        orcid: "https://orcid.org/0009-0004-0790-9927"
+      - family-names: "Gebler"
+        given-names: "Sebastian"
+        orcid: "https://orcid.org/0000-0002-9421-7117"
+      - family-names: "Lorke"
+        given-names: "Andreas"
+        orcid: "https://orcid.org/0000-0001-5533-1817"
+    journal: "Environmental Research"
+    volume: 271
+    year: 2025
+    doi: "10.1016/j.envres.2025.121104"
+  - type: article
+    title: "Landscape-level assessment of spray drift – A virtual experiment using the Droplet and Atmospheric Dispersion drift (DAD-drift) model"
+    authors:
+      - family-names: "Fuchs"
+        given-names: "Mike Devin"
+        orcid: "https://orcid.org/0009-0004-0790-9927"
+      - family-names: "Gebler"
+        given-names: "Sebastian"
+        orcid: "https://orcid.org/0000-0002-9421-7117"
+      - family-names: "Lorke"
+        given-names: "Andreas"
+        orcid: "https://orcid.org/0000-0001-5533-1817"
+    journal: "Environmental Modelling & Software"
+    volume: 189
+    year: 2025
+    doi: "10.1016/j.envsoft.2025.106455"
