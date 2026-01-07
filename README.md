@@ -24,7 +24,7 @@ The [example projects](examples/) contain four exemplary use cases of `DAD drift
 
 ### Source Code
 
-`DAD-drift` is written in `Fortran 90`, the [source code](source_code/) contains all `source files` of the model as well as a `Makefile` for compilation of the executable.
+`DAD-drift` is written in `Fortran 90`, the [source code](source_code/) contains all `source files` of the model, [make](source_code/make) containes two `Makefile` for compilation of the executable using `ifx` or `gfortran`.
 
 ### Executable
 

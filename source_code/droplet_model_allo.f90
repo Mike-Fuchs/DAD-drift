@@ -14,7 +14,7 @@
 ! You should have received a copy of the GNU General Public License
 ! along with this program; If not, see <https://www.gnu.org/licenses/>.
 
-subroutine droplet_model_allo (n, n_dc, n_x)
+subroutine droplet_model_allo (n, n_dc)
   !! ~~~~ description ~~~~
   !! This function will allocate the droplet and environment data frames.
   
@@ -23,7 +23,6 @@ subroutine droplet_model_allo (n, n_dc, n_x)
   implicit none
   integer, intent(in) :: n								![-]					|number of time steps
   integer, intent(in) :: n_dc							![-]					|number of droplet classes
-  integer, intent(in) :: n_x							![-]					|length of sd vector
   integer :: i											![-]					|counter
   
   !allocate local environment
@@ -91,12 +90,12 @@ subroutine droplet_model_allo (n, n_dc, n_x)
 	allocate(drop_mod(i)%dag_res(n))
 	allocate(drop_mod(i)%dag_res_chg(n))
 	allocate(drop_mod(i)%dt(n))
-	allocate(drop_mod(i)%Uz(n))
-	allocate(drop_mod(i)%Ud(n))
-	allocate(drop_mod(i)%x_mean(n))
-	allocate(drop_mod(i)%sigma_h(n))
 	allocate(drop_mod(i)%sigma_v(n))
-	allocate(drop_mod(i)%x_s(n,n_x))
+	allocate(drop_mod(i)%puff_slc%z(n,N_slices))
+    allocate(drop_mod(i)%puff_slc%Uz(n,N_slices))
+    allocate(drop_mod(i)%puff_slc%x_trav(n,N_slices))
+    allocate(drop_mod(i)%puff_slc%sigma_h_out(n,N_slices))
+	allocate(drop_mod(i)%z_idx(n,2))
   end do
   
   end subroutine droplet_model_allo

@@ -28,7 +28,7 @@ subroutine environment_initialisation
   env_dat%T_K = env_dat%T_C + K_0
   
   ! computerelative hunidity as percent
-  env_dat%RH_P = env_dat%RH * 100._i_kind
+  env_dat%Rh_P = env_dat%Rh * 100._i_kind
   
   ! compute dynamic viscosity of air
   env_dat%mu_air = sutherland_formula(env_dat%T_K)
@@ -53,8 +53,13 @@ subroutine environment_initialisation
   env_dat%d = env_dat%Hv * 0.63_i_kind
   
   !calculate wind speed at the top of the canopy
-  env_dat%Uh = (env_dat%U_fric/Kc)*log((env_dat%Hv-env_dat%d)/env_dat%z0)
-  
+  if(env_dat%Hv > (env_dat%d + 2 * env_dat%z0)) then
+    env_dat%Uh = (env_dat%U_fric/Kc)*log((env_dat%Hv-env_dat%d)/env_dat%z0)
+  else
+    env_dat%Hv = env_dat%d + 2 * env_dat%z0
+	env_dat%Uh = (env_dat%U_fric/Kc)*log((env_dat%Hv-env_dat%d)/env_dat%z0)
+  end if
+
   print *, 'environment initialisation successful' 
   
   end subroutine environment_initialisation

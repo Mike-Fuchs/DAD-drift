@@ -20,8 +20,9 @@ module data_module
   use constants_module
     
   implicit none
+  integer :: i
   private
-  public :: env_dat, drop_spec, control_dat, app_dat, drop_mod, loc_env, drift_curve_matrix
+  public :: env_dat, drop_spec, control_dat, app_dat, drop_mod, loc_env, drift_curve_matrix, N_slices, slice_multi
   
   type :: environmental_data
     real(i_kind) :: T_C																![°C]					|ambient temperature
@@ -45,6 +46,7 @@ module data_module
 	real(i_kind) :: LAI																![m²/m²]				|leaf area index of vegetation
 	real(i_kind) :: d																![m]					|zero plane displacement
 	real(i_kind) :: Uh																![m/s]					|wind speed at the top of the canopy
+	real(i_kind) :: k_skew															![-]					|skewing factor along the downwind dimension
 	end type environmental_data
   type(environmental_data) :: env_dat
   
@@ -65,11 +67,11 @@ module data_module
 	real(i_kind) :: z_0																![m]					|deposition height
 	real(i_kind) :: max_dist														![m]					|maximum distance of drift calculation
 	real(i_kind) :: max_time = 3600													![s]					|maximum distance of drift calculation
-	integer :: max_n_time = 128														![-]					|maximum number of time steps
 	integer :: field_count															![-]					|number of fields
 	real(i_kind) :: cellsize														![m]					|cellsize of the raster
 	real(i_kind) :: sd = 3._i_kind													![-]					|number of standard deviation relevant for pattern prediction
 	logical :: dev_mode	= .false.													![-]					|flag if devmode should be active
+	real(i_kind) :: max_dist_step = 10._i_kind
 	end type control_data
   type(control_data) control_dat
   
@@ -96,6 +98,20 @@ module data_module
   end type application_data
   type(application_data) :: app_dat
   
+  type puff_dimensions
+    real(i_kind) :: t1																![s]					|time of first puff contact with deposition height
+	real(i_kind) :: t2																![s]					|time of last puff contact with deposition height
+	real(i_kind) :: x_min															![m]					|minimal deposition distance (x-direction)
+	real(i_kind) :: x_max															![m]					|maximal deposition distance (x-direction)
+	real(i_kind) :: y_max															![m]					|maximal deposition spread (y-direction)
+  end type puff_dimensions
+  
+  type puff_slices
+    real(i_kind), dimension (:,:), allocatable :: z									![m]					|z position of slice center
+	real(i_kind), dimension (:,:), allocatable :: Uz									![m/s]					|wind speed based on wind profile and slice center heigth
+	real(i_kind), dimension (:,:), allocatable :: x_trav								![m]					|cumulativly travelled distance
+	real(i_kind), dimension (:,:), allocatable :: sigma_h_out							![m]					|cumulativ horizontal dispersion
+  end type puff_slices
   
   type droplet_model
     real(i_kind), dimension (:), allocatable :: time								![s]					|time
@@ -130,12 +146,10 @@ module data_module
 	real(i_kind), dimension (:), allocatable :: dag_res								![-]					|distribution above ground
 	real(i_kind), dimension (:), allocatable :: dag_res_chg							![-]					|distribution above ground
 	real(i_kind), dimension (:), allocatable :: dt									![s]					|delta time
-	real(i_kind), dimension (:), allocatable :: Uz									![s]					|wind speed depending on z
-	real(i_kind), dimension (:), allocatable :: Ud									![s]					|travelled distance
-	real(i_kind), dimension (:), allocatable :: x_mean								![s]					|mean x position of puff at deposition height
-	real(i_kind), dimension (:), allocatable :: sigma_h								![s]					|horizontal puff dispersion coefficient
 	real(i_kind), dimension (:), allocatable :: sigma_v								![s]					|vertical puff dispersion coefficient
-	real(i_kind), dimension (:,:), allocatable :: x_s
+	type(puff_dimensions) :: puff_dim
+	type(puff_slices) :: puff_slc
+	integer, dimension(:,:), allocatable :: z_idx												![-]					|index in z dimension for interpolation
   end type droplet_model
   type(droplet_model), dimension(:), allocatable :: drop_mod
   
@@ -171,5 +185,8 @@ module data_module
 	real(i_kind), dimension (:), allocatable :: dt									![s]					|time step width
   end type local_environment
   type(local_environment) :: loc_env
+  
+  integer, parameter :: N_slices = 61
+  real(i_kind), dimension(N_slices), parameter :: slice_multi = [ ( -3.0_i_kind + 0.1_i_kind * real(i - 1, i_kind), i = 1, N_slices ) ]
   
   end module data_module

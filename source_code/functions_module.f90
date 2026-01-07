@@ -22,12 +22,12 @@ module functions_module
   
   implicit none
   private
-  public :: diffusion_model_xyz, xyt_profiler, x_of_ellipse, xyz_create, xy_res, time_res1, time_res2, interpolate, expand_grid, settling_velocity, wind_profile, sutherland_formula, saturated_vapor_pressure, &
-			wet_bulb_temperature, diffusion_coefficient_water, water_density, absolute_humidity, relative_humidity, air_density, latent_heat_of_vaporization, cdf_normal_sigma, souton_sigma_h, souton_sigma_v, &
+  public :: diffusion_model_xyz_integrated, x_of_ellipse, xyz_create, cell_budget, xy_res, time_res, interpolate, interpolate_idx, interpolate_2d_geo, expand_grid, settling_velocity, wind_profile, sutherland_formula, saturated_vapor_pressure, &
+			wet_bulb_temperature, diffusion_coefficient_water, water_density, absolute_humidity, relative_humidity, air_density, latent_heat_of_vaporization, cdf_normal_sigma, souton_sigma_h, souton_sigma_v, souton_v_Kz, &
 			unique, position_B_in_A, cbind, rbind
   
   contains
-	function diffusion_model_xyz (x,y,z,M,z_off,U_mean,edv,sigma_h,sigma_v) result(f)
+	function diffusion_model_xyz_integrated (x,y,z,M,z_off,x_off,V_z,sigma_h,t,res) result(f)
       !! ~~~~ description ~~~~
 	  !! This function will compute the gaussian puff model
 	  
@@ -40,113 +40,66 @@ module functions_module
 	  real(i_kind), intent(in) :: z 					![m]					|z-coordinate
 	  real(i_kind), intent(in) :: M						![kg]					|released mass
 	  real(i_kind), intent(in) :: z_off					![m]					|offset in z-direction as function of t as calculated by droplet model
-	  real(i_kind), intent(in) :: U_mean				![m]					|mean x as calculated by droplet model
-	  real(i_kind), intent(in) :: edv					![m/s]					|effective deposition velocity
+	  real(i_kind), intent(in) :: x_off					![m]					|mean x as calculated by droplet model
+	  real(i_kind), intent(in) :: V_z					![m/s]					|effective deposition velocity
 	  real(i_kind), intent(in) :: sigma_h				![m/s]					|effective deposition velocity
-	  real(i_kind), intent(in) :: sigma_v				![m/s]					|effective deposition velocity
+	  real(i_kind), intent(in) :: t						![s]					|time
+	  real(i_kind), intent(in) :: res					![m]					|resolution of the matrix
 	  real(i_kind) :: c									![kg/m³]				|concentration of AI in air
 	  real(i_kind) :: f									![kg/m³s]				|deposition rate
+	  real(i_kind) :: alpha								![-]					|alpha skewness factor
+	  real(i_kind) :: norm_term							![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: x_term							![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: y_term							![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: z_term							![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: skew_term							![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: x1								![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: x2								![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: y1								![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: y2								![-]					|skewed term for implementation into gaussian model
+	  real(i_kind) :: sigma_v							![m/s]					|effective deposition velocity
+	  real(i_kind) :: Kz							![m/s]					|effective deposition velocity
+	  real(i_kind) :: flux_term
 	  
-	  c = (M)/(((2._i_kind*pi)**(3._i_kind/2._i_kind))*(sigma_h*sigma_h*sigma_v)) * exp(-((x-U_mean)**2._i_kind)/(2._i_kind*((sigma_h)**2._i_kind))) * exp(-(y**2._i_kind)/(2._i_kind*((sigma_h)**2._i_kind))) * exp(-((z-z_off)**2._i_kind)/(2._i_kind*((sigma_v)**2._i_kind)))
-	  f = c * edv
+	  !determine x1 & x2
+	  x1 = x - 0.5_i_kind*res
+	  x2 = x + 0.5_i_kind*res
 	  
-    end function diffusion_model_xyz
-	
-	
-	function xyt_profiler (i_ds) result(A)
-	  !! ~~~~ description ~~~~
-	  !! This function will return the min and max values for x, y and t
+	  !determine y1 & y2
+	  y1 = y - 0.5_i_kind*res
+	  y2 = y + 0.5_i_kind*res
 	  
-	  use data_module
-	  use constants_module
-	  	  
-	  implicit none
-	  integer, intent(in) :: i_ds											![-]					|counter over droplet spectrum
-	  real(i_kind), dimension(5) :: A										![-]					|min-max output array (xmin,xmax,ymax,tmin,tmax)
-	  real(i_kind), dimension(:,:), allocatable :: txz						![-]					|matrix for time, x- and z- coordinate
-	  real(i_kind), dimension(:,:), allocatable :: txz_res					![-]					|matrix for time, x- and z- coordinate
-	  real(i_kind), dimension(:), allocatable :: time						![s]					|time array
-	  integer :: i															![-]					|counter
-	  integer :: j															![-]					|counter
-	  integer :: nt															![-]					|number of time steps
-	  real(i_kind) :: max_time												![-]					|maximum time
-	  real(i_kind) :: time_res												![-]					|time step width
-	  real(i_kind) :: dt													![-]					|time step width
-	  integer :: max_time_n													![-]					|maximum time
-	  integer :: min_time_n													![-]					|minimum time
-	  integer, dimension(:), allocatable :: sel_vec							![-]					|vector for data selection
-	  logical :: logi														![-]					|flag
+	  !calculate sigma_v
+	  sigma_v = souton_sigma_v(env_dat%sig_v,t)
 	  
-	  !max time of droplet model
-	  max_time = maxval(pack(drop_mod(i_ds)%time,mask=drop_mod(i_ds)%time>0._i_kind))
-	  !resolution of time scale
-	  time_res = time_res_p23(0._i_kind,max_time,5000)
-	  !max_time_n
-	  max_time_n = ceiling(max_time/time_res)
-	  !min_time_n
-	  min_time_n = floor(0._i_kind/time_res)
-	  !delta time
-	  dt = (real(min_time_n,i_kind)*time_res)-0._i_kind 
-	  !create time array
-	  time = (real((/(i,i=min_time_n,max_time_n)/),i_kind)*time_res)-dt
+	  !calculate sigma_v_Kz
+	  !Kz = souton_v_Kz(env_dat%sig_v,t)
 	  
-	  !allocate txz
-	  nt = size(time)
-	  allocate(txz(nt,9))
-	  txz = 0._i_kind
-	  txz(:,1) = time
+	  !calculate flux term
+	  flux_term = V_z
+      
+	  !alpha term for skewing
+	  alpha = env_dat%k_skew * env_dat%U_wind * t**0.5_i_kind * (sigma_v / sigma_h)
 	  
-	  !loop
-	  do i=1, nt
-	    !center of x
-		txz(i,2) = interpolate(drop_mod(i_ds)%time,drop_mod(i_ds)%x_mean,txz(i,1))
-		!center of z
-		txz(i,3) = interpolate(drop_mod(i_ds)%time,drop_mod(i_ds)%z,txz(i,1))
-		!a (2*sigma_horizontal)
-		txz(i,4) = souton_sigma_h(env_dat%sig_h,txz(i,1),(txz(i,1)*env_dat%U_wind)) * control_dat%sd
-		!b (2*sigma_vertical)
-		if(txz(i,3) > control_dat%z_0)then
-		  txz(i,5) = souton_sigma_v(env_dat%sig_v,txz(i,1)) * control_dat%sd
-		else
-		  txz(i,5) = txz(i-1,5)
-		end if
-		!x1 & x2
-		txz(i,6:7) = x_of_ellipse(abs(txz(i,3)-control_dat%z_0),txz(i,4),txz(i,5))+txz(i,2)
-		!y1 & y2
-		txz(i,8:9) = x_of_ellipse(abs(txz(i,3)-control_dat%z_0),txz(i,4),txz(i,5))
-	  end do
+	  !mass normalization term
+	  norm_term = M / ((2.0*pi)**1.5 * sigma_h**2 * sigma_v)
 	  
-	  !check if any value are larger than max_dist
-	  logi = any(txz(:,7) > control_dat%max_dist)
+	  !x-dimension term
+	  x_term = (erf( (x2 - x_off) / (sqrt(2.0_i_kind)*sigma_h) ) - erf( (x1 - x_off) / (sqrt(2.0_i_kind)*sigma_h) )) * (sqrt(pi/2.0)*sigma_h)
 	  
-	  !limit to  valid execution ellips function
-	  sel_vec = pack((/(j,j=1,nt,1)/) ,mask = (.not.isnan(txz(:,6)) .and. txz(:,6)<control_dat%max_dist))
-	  txz_res = txz(sel_vec,:)
+	  !y-dimension term
+	  y_term = (erf(  y2 / (sqrt(2.0_i_kind)*sigma_h) ) - erf(  y1 / (sqrt(2.0_i_kind)*sigma_h) )) * (sqrt(pi/2.0)*sigma_h)
 	  
-	  !determine A
-	  !x1
-	  A(1) = max(minval(txz_res(:,6)),-25._i_kind)
-	  !x2
-	  if(logi)then
-	    A(2) = control_dat%max_dist
-	  else
-	    A(2) = maxval(txz_res(:,7))
-	  end if
-	  !y
-	  A(3) = min(maxval(txz_res(:,9)),(control_dat%max_dist/2._i_kind))
-	  !t1
-	  A(4) = minval(txz_res(:,1))
-	  !t2
-	  A(5) = maxval(txz_res(:,1))
+	  !z-dimension term
+	  z_term = exp(-((z-z_off)**2._i_kind)/(2._i_kind*((sigma_v)**2._i_kind)))
 	  
+	  !skewing term
+	  skew_term = 1.0_i_kind + erf( alpha * (x  - x_off) / (sqrt(2.0_i_kind) * sigma_h) )
 	  
-	  !deallocate arrays
-	  if(allocated(txz)) deallocate(txz)
-	  if(allocated(time)) deallocate(time)
-	  if(allocated(txz_res)) deallocate(txz_res)
-	  if(allocated(sel_vec)) deallocate(sel_vec)
+	  !mass flux
+	  f = norm_term * x_term * y_term * z_term * skew_term * flux_term
 	  
-	end function xyt_profiler
+    end function diffusion_model_xyz_integrated
 	
 	
 	function x_of_ellipse (y,a,b) result(x)
@@ -168,7 +121,7 @@ module functions_module
 	end function x_of_ellipse
 	
 	
-	subroutine xyz_create (A, res, xyz, lat_coord, long_coord)
+	subroutine xyz_create (x_min, x_max, y_max, res, xyz, lat_coord, long_coord)
 	  !! ~~~~ description ~~~~
 	  !! This function will create the xyz table based on min&max of x&y and the wind direction
 	  
@@ -176,7 +129,9 @@ module functions_module
 	  use constants_module
 	  	  
 	  implicit none
-	  real(i_kind), dimension(3), intent(in) :: A									![-]					|droplet matrix
+	  real(i_kind), intent(in) :: x_min													![-]					|droplet matrix
+	  real(i_kind), intent(in) :: x_max													![-]					|droplet matrix
+	  real(i_kind), intent(in) :: y_max													![-]					|droplet matrix
 	  real(i_kind), intent(in) :: res												![m]					|resoultion
 	  real(i_kind), dimension(:,:), allocatable, intent(out) :: xyz					![-]					|xyz table
 	  real(i_kind), dimension(:), allocatable, intent(out) :: lat_coord				![m]					|x coordinate
@@ -185,9 +140,6 @@ module functions_module
       real(i_kind), dimension(:), allocatable :: y_coord							![m]					|y coordinate
       real(i_kind), dimension(:,:), allocatable :: temp_xy							![-]					|temporal xy matrix
       real(i_kind) :: angle															![°]					|angle of wind direction
-      real(i_kind) :: x_min															![m]					|minimal distance of x
-      real(i_kind) :: x_max															![m]					|maximal distance of x
-      real(i_kind) :: y_max															![m]					|maximal distance of y
       real(i_kind) :: lat_max														![m]					|maximal distance of lat
       real(i_kind) :: lat_min														![m]					|minimal distance of lat
       real(i_kind) :: long_max														![m]					|maximal distance of long
@@ -197,11 +149,6 @@ module functions_module
       real(i_kind) :: long_max_adj													![m]					|maximal distance of long adjusted for resolution
       real(i_kind) :: long_min_adj													![m]					|minimal distance of long adjusted for resolution
 	  integer :: i																	![-]					|counter
-	  
-	  !assign min and max values for x and y
-	  x_min = A(1)
-	  x_max = A(2)
-	  y_max = A(3)
 	  
 	  !initialize xy grid
       x_coord = real((/(i, i=int((x_min/res)),int((x_max/res)))/),i_kind)*res
@@ -248,178 +195,103 @@ module functions_module
 	  
 	end subroutine xyz_create
 	
+	function cell_budget(x_span, N_min, N_max, mu, sigma, alpha) result(N_cell)
+	  !! ~~~~ description ~~~~
+	  !! This function will compute the resolution in x-y space
+	  
+	  implicit none
+	  real(i_kind), intent(in) :: x_span										![-]					|droplet matrix
+	  real(i_kind), intent(in) :: N_min											![-]					|droplet matrix
+	  real(i_kind), intent(in) :: N_max											![-]					|droplet matrix
+	  real(i_kind), intent(in) :: mu											![-]					|droplet matrix
+	  real(i_kind), intent(in) :: sigma											![-]					|droplet matrix
+	  real(i_kind), intent(in) :: alpha											![-]					|droplet matrix
+	  real(i_kind) :: N_cell														![m]					|resolution
+	  real(i_kind) :: G, S, arg, N_real
+	  
+	  ! Gaussian core term
+      G = exp( -((x_span - mu)**2) / (2.0_i_kind * sigma**2) )
+	  
+      ! Skewing factor
+      arg = alpha * (x_span - mu) / (sigma * sqrt(2.0_i_kind))
+      S   = 1.0_i_kind + erf(arg)
+	  
+      ! Final continuous N
+      N_real = N_min + (N_max - N_min) * G * S
+	  
+	  ! Ensure output is a valid integer and never below N_min
+      N_cell = max(N_real, N_min)
+	  
+	end function cell_budget
 	
-	function xy_res (A) result(res)
+	function xy_res (x_min,x_max,y_max) result(res)
 	  !! ~~~~ description ~~~~
 	  !! This function will compute the resolution in x-y space
 	  
 	  use data_module
 	   
 	  implicit none
-	  real(i_kind), dimension(3), intent(in) :: A								![-]					|droplet matrix
+	  real(i_kind), intent(in) :: x_min,x_max,y_max								![-]					|droplet matrix
 	  real(i_kind) :: res														![m]					|resolution
-	  integer :: i																![-]					|counter
-	  real(i_kind), dimension(12,7) :: mat										![-]					|matrix
-	  integer, dimension(12) :: ex												![-]					|exponent array
+	  integer, dimension(31) :: ex												![-]					|exponent array
+	  real(i_kind), dimension(31) :: dx, xmin, xmax, ymax, nx, ny, ncell
+	  real(i_kind) :: n_allowed, x_span
 	  
-	  ex = (/-3,-2,-1,0,1,2,3,4,5,6,7,8/)
+	  ex = (/-10,-9,-8,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20/)
 	  
-	  do i=1,12
-	    mat(i,1) = 1._i_kind/(2._i_kind**(real(ex(i),i_kind)))
-		mat(i,2) = real(floor(A(1)/mat(i,1)),i_kind)*mat(i,1)
-		mat(i,3) = real(ceiling(A(2)/mat(i,1)),i_kind)*mat(i,1)
-		mat(i,4) = real(ceiling(A(3)/mat(i,1)),i_kind)*mat(i,1)
-		mat(i,5) = (mat(i,3)-mat(i,2))/mat(i,1)
-		mat(i,6) = (mat(i,4)*2._i_kind)/mat(i,1)
-		mat(i,7) = mat(i,5)*mat(i,6)
-	  end do
+	  ! resolution candidates
+      dx   = 1._i_kind / (2._i_kind ** real(ex, i_kind))
+      
+      ! x and y bounds
+      xmin = floor(x_min / dx) * dx
+      xmax = ceiling(x_max / dx) * dx
+      ymax = ceiling(y_max / dx) * dx
 	  
-	  !get lowest resolution with n below max n
-	  res = minval(pack(mat(:,1),mask=mat(:,7) < 65536._i_kind))
+	  ! number of cells in x and y
+      nx    = (xmax - xmin) / dx
+      ny    = (2._i_kind * ymax) / dx
+      
+      ! total cell count
+      ncell = nx * ny
+	  
+	  
+	  !compute x_span
+	  x_span = x_max - x_min
+	  if(x_span < 1._i_kind) then
+	    res = minval(pack(dx, mask = ncell < 9000._i_kind))
+	  else
+	    !calculate allowed cells
+		n_allowed = cell_budget(x_span,30000._i_kind,180000._i_kind,700._i_kind,500._i_kind,1.3_i_kind)
+      
+	    !finalize resolution
+	    res = minval(pack(dx, mask = ncell < n_allowed))
+	  end if
 	  
 	end function xy_res
 	
 	
-	function time_res1 (A) result(res)
-	  !! ~~~~ description ~~~~
-	  !! This function will compute the time resolution
+    function time_res(t1, t2) result(res)
+      !! ~~~~ description ~~~~
+      !! Compute time resolution from t1–t2 using control_dat%max_n_time
+      
+      use data_module
+      
+      implicit none
+      real(i_kind), intent(in) :: t1, t2    ! [s] time bounds
+      real(i_kind) :: res                   ! [s] time step width
+      real(i_kind) :: N_t					! [-] number of time steps
+      real(i_kind) :: tspan 				! [s] span min to max
 	  
-	  use data_module
-	    
-	  implicit none
-	  real(i_kind), dimension(2), intent(in) :: A								![-]					|droplet matrix
-	  real(i_kind) :: res														![m]					|resolution
-	  real(i_kind), dimension(73) :: res_arr									![m]					|resolution array
-	  integer, dimension(73) :: n_arr											![-]					|array
-	  integer, dimension(12) :: num												![-]					|array of decimal numbers
-	  integer :: i																![-]					|counter
-	  integer :: p																![-]					|counter
+	  !calculate tspan
+	  tspan = t2 - t1
 	  
-	  !define num
-	  num = [9,0,0,0,0,0,0,0,0,0,0,0]
+	  !calculate number of time steps
+	  N_t = max(51._i_kind, + 23._i_kind*tspan**0.5_i_kind)
 	  
-	  !prepare arrays
-	  res_arr = 0._i_kind
-	  n_arr = 0
-	  
-	  p = 1
-	  do i=1,73
-	    !calculate res and number of datapoints
-		res_arr(i) = 10._i_kind*real(num(1),i_kind) + 1._i_kind*real(num(2),i_kind) + 0.1_i_kind*real(num(3),i_kind) + 0.01_i_kind*real(num(4),i_kind) + 0.001_i_kind*real(num(5),i_kind) + 0.0001_i_kind*real(num(6),i_kind) + 0.00001_i_kind*real(num(7),i_kind) + 0.000001_i_kind*real(num(8),i_kind) + 0.0000001_i_kind*real(num(9),i_kind) + 0.00000001_i_kind*real(num(10),i_kind) + 0.000000001_i_kind*real(num(11),i_kind) + 0.0000000001_i_kind*real(num(12),i_kind)
-		n_arr(i) = nint(((real(ceiling(A(2)/res_arr(i)),i_kind)*res_arr(i))-(real(floor(A(1)/res_arr(i)),i_kind)*res_arr(i)))/res_arr(i))
-		
-		!check to exit loop
-		if(n_arr(i) > control_dat%max_n_time) exit
-		
-		!iterate num
-		if (num(p) > 1) then
-		  num(p) = num(p) - 1
-		else
-		  num(p) = 0
-		  p = p + 1
-		  num(p) = 9
-		end if
-	  end do
-	  
-	  res = min(res_arr(size(pack(n_arr,mask = n_arr /= 0))-1),10._i_kind)
-	  
-	end function time_res1
-	
-	
-	function time_res2 (A) result(res)
-	  !! ~~~~ description ~~~~
-	  !! This function will compute the time resolution
-	  
-	  use data_module
-	   
-	  implicit none
-	  real(i_kind), dimension(2), intent(in) :: A								![-]					|droplet matrix
-	  real(i_kind) :: res														![m]					|resolution
-	  real(i_kind), dimension(73) :: res_arr									![m]					|resolution array
-	  integer, dimension(73) :: n_arr											![-]					|array
-	  integer, dimension(12) :: num												![-]					|array of decimal numbers
-	  integer :: i																![-]					|counter
-	  integer :: p																![-]					|counter
-	  
-	  !define num
-	  num = [9,0,0,0,0,0,0,0,0,0,0,0]
-	  
-	  !prepare arrays
-	  res_arr = 0._i_kind
-	  n_arr = 0
-	  
-	  p = 1
-	  do i=1,73
-	    !calculate res and number of datapoints
-		res_arr(i) = 10._i_kind*real(num(1),i_kind) + 1._i_kind*real(num(2),i_kind) + 0.1_i_kind*real(num(3),i_kind) + 0.01_i_kind*real(num(4),i_kind) + 0.001_i_kind*real(num(5),i_kind) + 0.0001_i_kind*real(num(6),i_kind) + 0.00001_i_kind*real(num(7),i_kind) + 0.000001_i_kind*real(num(8),i_kind) + 0.0000001_i_kind*real(num(9),i_kind) + 0.00000001_i_kind*real(num(10),i_kind) + 0.000000001_i_kind*real(num(11),i_kind) + 0.0000000001_i_kind*real(num(12),i_kind)
-		n_arr(i) = nint(((real(ceiling(A(2)/res_arr(i)),i_kind)*res_arr(i))-(real(floor(A(1)/res_arr(i)),i_kind)*res_arr(i)))/res_arr(i))
-		
-		!check to exit loop
-		if(n_arr(i) > (control_dat%max_n_time/2)) exit
-		
-		!iterate num
-		if (num(p) > 1) then
-		  num(p) = num(p) - 1
-		else
-		  num(p) = 0
-		  p = p + 1
-		  num(p) = 9
-		end if
-	  end do
-	  
-	  res = min(res_arr(size(pack(n_arr,mask = n_arr /= 0))-1),10._i_kind)
-	  
-	end function time_res2
-	
-	
-	function time_res_p23 (t_min,t_max,L) result(res)
-	  use data_module
-	  !! ~~~~ description ~~~~
-	  !! This function will compute the time resolution
-	  	  
-	  implicit none
-	  real(i_kind), intent(in) :: t_min											![s]					|minimal time
-	  real(i_kind), intent(in) :: t_max											![s]					|maximal time
-	  real(i_kind), dimension(73) :: res_arr									![m]					|resolution array
-	  integer, dimension(73) :: n_arr											![-]					|array
-	  integer, intent(in) :: L													![-]					|length
-	  real(i_kind) :: res														![m]					|resolution
-	  integer, dimension(12) :: num												![-]					|array of decimal numbers
-	  integer :: i																![-]					|counter
-	  integer :: p																![-]					|counter
-	  
-	  !define num
-	  num = [1,0,0,0,0,0,0,0,0,0,0,0]
-	  
-	  !prepare arrays
-	  res_arr = 0._i_kind
-	  n_arr = 0
-	  
-	  !set res to maximum value
-	  res = 10._i_kind
-	  
-	  p = 1
-	  do i=1,73
-	    !calculate res and number of datapoints
-		res_arr(i) = 10._i_kind*real(num(1),i_kind) + 1._i_kind*real(num(2),i_kind) + 0.1_i_kind*real(num(3),i_kind) + 0.01_i_kind*real(num(4),i_kind) + 0.001_i_kind*real(num(5),i_kind) + 0.0001_i_kind*real(num(6),i_kind) + 0.00001_i_kind*real(num(7),i_kind) + 0.000001_i_kind*real(num(8),i_kind) + 0.0000001_i_kind*real(num(9),i_kind) + 0.00000001_i_kind*real(num(10),i_kind) + 0.000000001_i_kind*real(num(11),i_kind) + 0.0000000001_i_kind*real(num(12),i_kind)
-		n_arr(i) = nint(((real(ceiling(t_max/res_arr(i)),i_kind)*res_arr(i))-(real(floor(t_min/res_arr(i)),i_kind)*res_arr(i)))/res_arr(i))
-		
-		!check to exit loop
-		if(n_arr(i) > L) exit
-		
-		!iterate num
-		if (num(p) > 1) then
-		  num(p) = num(p) - 1
-		else
-		  num(p) = 0
-		  p = p + 1
-		  num(p) = 9
-		end if
-	  end do
-	  
-	  res = res_arr(size(pack(n_arr,mask = n_arr /= 0))-1)	  
-	  
-	end function time_res_p23
+	  !calculate resolution
+	  res = tspan / N_t
+    
+    end function time_res
 	
 	
 	function interpolate(arr_a, arr_b,a) result(b)
@@ -429,7 +301,7 @@ module functions_module
 	  implicit none
 	  real(i_kind), dimension(:), intent(in) :: arr_a							![-]					|incomming array of variable a
 	  real(i_kind), dimension(:), intent(in) :: arr_b							![-]					|incomming array of variable b
-	  real(i_kind) :: a															![-]					|incomming value of variable a
+	  real(i_kind), intent(in) :: a												![-]					|incomming value of variable a
 	  real(i_kind) :: b															![-]					|resulting value of variable b
 	  real(i_kind) :: a_1, a_2													![-]					|temporal values
 	  real(i_kind) :: b_1, b_2													![-]					|temporal values
@@ -445,6 +317,96 @@ module functions_module
 	  b = b_1 + (a-a_1)*((b_2-b_1)/(a_2-a_1))
 	
 	end function interpolate
+	
+	
+	function interpolate_idx(arr_a,arr_b,idx_1,idx_2,a) result(b)
+	  !! ~~~~ description ~~~~
+	  !! This function will compute the value of b based on all values of a and b, index 1&2, and the value of a
+	  
+	  implicit none
+	  real(i_kind), dimension(:), intent(in) :: arr_a							![-]					|incomming array of variable a
+	  real(i_kind), dimension(:), intent(in) :: arr_b							![-]					|incomming array of variable b
+	  integer, intent(in) :: idx_1												![-]					|incomming index 1
+	  integer, intent(in) :: idx_2												![-]					|incomming index 2
+	  real(i_kind), intent(in) :: a												![-]					|incomming value of variable a
+	  real(i_kind) :: b															![-]					|resulting value of variable b
+	  real(i_kind) :: a_1, a_2													![-]					|temporal values
+	  real(i_kind) :: b_1, b_2													![-]					|temporal values
+	  
+	  a_1 = arr_a(idx_1)
+	  a_2 = arr_a(idx_2)
+	  b_1 = arr_b(idx_1)
+	  b_2 = arr_b(idx_2)
+	  
+	  b = b_1 + (a-a_1)*((b_2-b_1)/(a_2-a_1))
+	
+	end function interpolate_idx
+	
+	
+    function interpolate_2d_geo(arr_t, arr_z, arr_mtx, t_idx_1, t_idx_2, z_idx_1_t1, z_idx_2_t1, z_idx_1_t2, z_idx_2_t2, t_val, z_val) result(b)
+      !! ~~~~ description ~~~~
+      !! Geometric bilinear interpolation on puff slice data arrays:
+      !! - uses precomputed lower/upper indices in time (t_idx_1, t_idx_2)
+      !!   and vertical space (z_idx_1, z_idx_2)
+      !! - multiplicative blending in log-space for numerical robustness
+    
+      implicit none
+      real(i_kind), dimension(:),   intent(in) :: arr_t          ! time array
+      real(i_kind), dimension(:,:), intent(in) :: arr_z          ! z positions [time, N_slices]
+      real(i_kind), dimension(:,:), intent(in) :: arr_mtx        ! quantity to interpolate [time, N_slices]
+      integer, intent(in) :: t_idx_1, t_idx_2                    ! lower/upper time indices
+      integer, intent(in) :: z_idx_1_t1, z_idx_2_t1              ! lower/upper vertical indices of t1
+      integer, intent(in) :: z_idx_1_t2, z_idx_2_t2              ! lower/upper vertical indices of t2
+      real(i_kind), intent(in) :: t_val, z_val                   ! target time and z position
+      real(i_kind) :: b                                          ! resulting interpolated value
+      real(i_kind) :: t1, t2, f_t
+      real(i_kind) :: z1_t1, z2_t1, z1_t2, z2_t2
+      real(i_kind) :: f_z_t1, f_z_t2
+      real(i_kind) :: v11, v12, v21, v22
+      real(i_kind) :: log_v11, log_v12, log_v21, log_v22
+      real(i_kind) :: log_v_t1, log_v_t2
+    
+      ! --- time interpolation fraction ---
+      t1  = arr_t(t_idx_1)
+      t2  = arr_t(t_idx_2)
+      f_t = (t_val - t1) / (t2 - t1)
+      
+      ! --- vertical geometry at t_idx_1 ---
+      z1_t1 = arr_z(t_idx_1, z_idx_1_t1)
+      z2_t1 = arr_z(t_idx_1, z_idx_2_t1)
+      f_z_t1 = (z_val - z1_t1) / (z2_t1 - z1_t1)
+      
+      ! --- vertical geometry at t_idx_2 ---
+      z1_t2 = arr_z(t_idx_2, z_idx_1_t2)
+      z2_t2 = arr_z(t_idx_2, z_idx_2_t2)
+      f_z_t2 = (z_val - z1_t2) / (z2_t2 - z1_t2)
+      
+      ! --- clamp fractions defensively ---
+      f_z_t1 = max(0._i_kind, min(1._i_kind, f_z_t1))
+      f_z_t2 = max(0._i_kind, min(1._i_kind, f_z_t2))
+      f_t    = max(0._i_kind, min(1._i_kind, f_t))
+      
+      ! --- corner values ---
+      v11 = max(arr_mtx(t_idx_1, z_idx_1_t1), 1.0e-12_i_kind)
+      v12 = max(arr_mtx(t_idx_1, z_idx_2_t1), 1.0e-12_i_kind)
+      v21 = max(arr_mtx(t_idx_2, z_idx_1_t2), 1.0e-12_i_kind)
+      v22 = max(arr_mtx(t_idx_2, z_idx_2_t2), 1.0e-12_i_kind)
+      
+      ! --- log transform ---
+      log_v11 = log(v11)
+      log_v12 = log(v12)
+      log_v21 = log(v21)
+      log_v22 = log(v22)
+      
+      ! --- vertical interpolation in log space ---
+      log_v_t1 = (1._i_kind - f_z_t1) * log_v11 + f_z_t1 * log_v12
+      log_v_t2 = (1._i_kind - f_z_t2) * log_v21 + f_z_t2 * log_v22
+      
+      ! --- time interpolation in log space ---
+      b = exp( (1._i_kind - f_t) * log_v_t1 + f_t * log_v_t2 )
+    
+    end function interpolate_2d_geo
+
 	
 	
 	function expand_grid (a,b) result(c)
@@ -532,7 +494,9 @@ module functions_module
 	      U = env_dat%Uh*exp((env_dat%LAI/2._i_kind)*((z/env_dat%Hv)-1._i_kind))
 	    end if
 		
-		U = max(U,0._i_kind)
+		! Cap wind speed to realistic upper limit
+        U = min(U, env_dat%U_wind)
+        U = max(U, 0._i_kind)
 	  
 	  end function wind_profile
 	  
@@ -707,7 +671,28 @@ module functions_module
 	  
 	  sigma = ((sig0*t) / (1._i_kind+(0.9_i_kind*((0.02_i_kind*t)**0.5_i_kind))))
 	  
-  	end function souton_sigma_v  
+  	end function souton_sigma_v
+	
+	function souton_v_Kz(sig0, t) result(Kz)
+      !! ~~~~ description ~~~~
+	  !! This function will calculate the derivate of the vertical dispersion coefficient 
+      implicit none
+	  
+      real(i_kind), intent(in) :: sig0   ! vertical eddy diffusion scale parameter
+      real(i_kind), intent(in) :: t      ! time [s]
+	  
+      real(i_kind) :: Kz
+      real(i_kind) :: d, sqrt_t, denom, factor
+	  
+      ! constant from Sutton parameterization
+      d = 0.9_i_kind * sqrt(0.02_i_kind)
+	  
+      sqrt_t = sqrt(t)
+      denom  = (1.0_i_kind + d * sqrt_t)**3
+      factor = (1.0_i_kind + 1.5_i_kind * d * sqrt_t)
+	  
+      Kz = (sig0**2 * t / denom) * factor
+    end function souton_v_Kz
 	
 	
 	function unique(vec) result(vec_unique)  

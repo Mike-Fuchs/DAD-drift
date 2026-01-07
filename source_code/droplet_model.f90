@@ -24,16 +24,15 @@ subroutine droplet_model
   
   implicit none
   
-  real(i_kind) :: dt_min														![s]					|minimal time step width
+  real(i_kind), dimension(:), allocatable :: dt_min, dt_vel, dt_mass, dt_dist	![s]					|
   real(i_kind) :: dt_tmp														![s]					|temporal time step width
-  real(i_kind) :: z_min															![s]					|threshold when to stop execution
   real(i_kind), dimension(:), allocatable :: vol_fact							![-]					|vector of volume factors for each droplet class
-  real(i_kind), dimension(:), allocatable :: alpha								![-]					|sd vector for vertical puff dispersion
-  real(i_kind), dimension(:), allocatable :: z									![m]					|vector of vertical position
-  real(i_kind), dimension(:), allocatable :: U									![m/s]					|vector of wind speed
+  real(i_kind), dimension(:), allocatable :: min_x
   real(i_kind) :: xmol															![-]					|molar fraction
+  real(i_kind) :: ratio															![-]					|
   real(i_kind) :: mh2o															![-]					|mass of water
   real(i_kind) :: evap_fact														![-]					|evaporation fraction
+  real(i_kind) :: fract_limit
   integer, dimension(:), allocatable :: sel_vec									![-]					|vector for data selection
   integer, dimension(:), allocatable :: iter_vec								![-]					|vector of maximal iteration steps
   integer :: s_max																![-]					|maximal step count
@@ -41,16 +40,19 @@ subroutine droplet_model
   integer :: t																	![-]					|counter looping over time
   integer :: d																	![-]					|counter looping over droplet classes
   integer :: i																	![-]					|counter
+  integer :: s																	![-]					|counter
+  integer, dimension(:), allocatable :: exit_code								![-]					|counter
   logical, dimension(:), allocatable :: ac										![-]					|logical vector if class is activly simulated, droplets z-position is above a given threshold
   logical, dimension(:), allocatable :: vv										![-]					|logical vector if velocity is deviating from ideal speed
   
+  !fraction change limiter
+  fract_limit = 100._i_kind
+  
+  !set s_max
+  s_max = 15000
+  
   !set evap_fact
   evap_fact = 1.0_i_kind
-  
-  !set minimal time step and maximal step count
-  dt_min = 0.001_i_kind
-  s_max = 500000
-  z_min = -10._i_kind
   
   !number of droplet classes
   n_dc = size(drop_spec%ds)
@@ -70,17 +72,25 @@ subroutine droplet_model
   allocate(vv(n_dc))
   vv = .true.
   
+  !allocate exit code
+  allocate(exit_code(n_dc))
+  exit_code = 0
+  
+  ! allocate min distance vector
+  allocate(min_x(n_dc))
+  
+  !allocate delta time vectors
+  allocate(dt_min(n_dc))
+  allocate(dt_vel(n_dc))
+  allocate(dt_mass(n_dc))
+  allocate(dt_dist(n_dc))
+  
   !allocate interation count vector
   allocate(iter_vec(n_dc))
   iter_vec = s_max
   
-  !define alpha vector
-  alpha = real([(i,i=-10,10)],i_kind)/2._i_kind
-  allocate(z(size(alpha)))
-  allocate(U(size(alpha)))
-  
   !allocate droplet model and loval environment
-  call droplet_model_allo(s_max, n_dc,size(alpha))
+  call droplet_model_allo(s_max, n_dc)
   
   !!initialise environment
   !time
@@ -131,7 +141,6 @@ subroutine droplet_model
   loc_env%d_E_h2o(1) = 0._i_kind
   loc_env%m_h2o_drop = 0._i_kind
   loc_env%d_m_h2o_evap = 0._i_kind
-  loc_env%dt(1) = dt_min
   
   !!initialising droplet classes
   do d=1, n_dc
@@ -185,7 +194,6 @@ subroutine droplet_model
 	!effective deposition velocity
 	drop_mod(d)%edv(1) = (drop_mod(d)%V_z(1))*drop_mod(d)%fract_AI(1)
 	! sigma calculation
-	drop_mod(d)%sigma_h(1) = 0._i_kind
 	drop_mod(d)%sigma_v(1) = 0._i_kind
 	!calculate distribution above ground
     drop_mod(d)%dag(1) = 1._i_kind
@@ -193,25 +201,57 @@ subroutine droplet_model
     drop_mod(d)%dag_res(1) = 1._i_kind
     !
     drop_mod(d)%dag_res_chg(1) = 0._i_kind
-	!x_s
-	drop_mod(d)%x_s(1,:) = 0._i_kind
 	
-    
-	!!time step width estimation
-	if (.not. abs(drop_mod(d)%V_z(1)) > 0._i_kind) then
-	  dt_tmp = dt_min
+	! puff slices
+	do s = 1, N_slices
+      ! vertical position of slice
+      drop_mod(d)%puff_slc%z(1,s) = drop_mod(d)%z(1) + (slice_multi(s) * drop_mod(d)%sigma_v(1))
+  
+      ! wind speed at slice height
+      drop_mod(d)%puff_slc%Uz(1,s) = wind_profile(drop_mod(d)%puff_slc%z(1,s))
+  
+      ! initialize travelled distance (none yet)
+      drop_mod(d)%puff_slc%x_trav(1,s) = 0._i_kind
+  
+      ! horizontal dispersion at t=0 (zero or small epsilon)
+      drop_mod(d)%puff_slc%sigma_h_out(1,s) = 0._i_kind
+    end do
+	
+	! initialize puff dimensions
+    drop_mod(d)%puff_dim%t1     = 0._i_kind
+    drop_mod(d)%puff_dim%t2     = 0._i_kind
+    drop_mod(d)%puff_dim%x_min  = 0._i_kind
+    drop_mod(d)%puff_dim%x_max  = 0._i_kind
+    drop_mod(d)%puff_dim%y_max  = 0._i_kind
+	
+	!determine time step width
+	if(vv(d)) then
+	  !calculate dt's
+	  dt_vel(d) = abs((drop_mod(d)%V_z(1)/abs(drop_mod(d)%dV_z_dt(1))))/fract_limit
+	  dt_mass(d) = abs((drop_mod(d)%m_h2o(1) / drop_mod(d)%dm_h2o_dt(1)))/fract_limit
+	  if(drop_mod(d)%V_x(1) < 1e-3)then
+		    dt_dist(d) = 1._i_kind
+		  else
+		    dt_dist(d) = control_dat%max_dist_step / drop_mod(d)%V_x(1)
+		  end if
+	  !check if velocity is still different from direct solution
+	  if(abs((drop_mod(d)%V_z(1)-g*drop_mod(d)%tau_m(1))/drop_mod(d)%V_z(1)) < 0.001_i_kind)then
+	    vv(d) = .false.
+	  end if
+	  
+	  !set minimal dt
+	  dt_min(d) = max(minval((/dt_vel(d),dt_mass(d),dt_dist(d)/)),1e-6)
 	else
-	  dt_tmp = (drop_mod(d)%V_z(1)/abs(drop_mod(d)%dV_z_dt(1)))/10._i_kind
-	end if
-	if(.not. abs(dt_tmp) > 0._i_kind) dt_tmp = dt_min
-	drop_mod(d)%dt(1) = dt_tmp
-	    
-	!delta time
-	if(drop_mod(d)%dt(1) < loc_env%dt(1))then
-	  loc_env%dt(1) = drop_mod(d)%dt(1)
+	  !calculate dt_mass
+	  dt_mass(d) = abs(drop_mod(d)%m_h2o(1) / drop_mod(d)%dm_h2o_dt(1))/fract_limit
+	  
+	  !set minimal dt
+	  dt_min(d) = max(minval((/dt_mass(d),dt_dist(d)/)),1e-6)
 	end if
   end do
-	
+  
+  !set loc time step width
+  loc_env%dt(1) = minval(dt_min)
 	
   !!calculate evaporating masses
   do d=1, n_dc
@@ -229,29 +269,12 @@ subroutine droplet_model
     loc_env%d_m_h2o_evap(1) = loc_env%d_m_h2o_evap(1) + drop_mod(d)%dm_h2o_a(1)
   end do
   
-  
-  !!calculate wind speed in dependency of z
-  do d=1, n_dc
-    !calculate wind speed
-	if(drop_mod(d)%z(1) >= control_dat%z_0)then
-	  !wind speed
-	  if(drop_mod(d)%z(1) >= env_dat%Hv)then
-	    drop_mod(d)%Uz(1) = (env_dat%U_fric/Kc)*log((drop_mod(d)%z(1)-env_dat%d)/env_dat%z0)
-	  else
-	    drop_mod(d)%Uz(1) = env_dat%Uh*exp((env_dat%LAI/2._i_kind)*((drop_mod(d)%z(1)/env_dat%Hv)-1._i_kind))
-	  end if
-	  !travelled distance
-	  drop_mod(d)%Ud(1) = drop_mod(d)%Uz(1) * loc_env%dt(1)
-	end if
-  end do
-  
   !calculate energy losst due to evaporation
   loc_env%d_E_h2o_evap(1) = -(loc_env%d_m_h2o_evap(1)*latent_heat_of_vaporization(loc_env%T_sys_K(1))) + ((loc_env%T_wb_C(1)+K_0)*loc_env%d_m_h2o_evap(1)*Cp_h2o)
-  
-  
+    
   !!time loop
   t = 2
-  do while (all((/any(ac),loc_env%time(t-1)<control_dat%max_time,t<=s_max/)))
+  do while (any(ac))
     !!update environment
     !time
     loc_env%time(t) = loc_env%time(t-1) + loc_env%dt(t-1)
@@ -305,8 +328,8 @@ subroutine droplet_model
     !Schmidt number at film temperature
     loc_env%Sc_h2o_f(t) = loc_env%mu_air_f(t)/(loc_env%rho_air_f(t)*loc_env%D_h2o_f(t))
     !set time step width
-	loc_env%dt(t) = dt_min
-	
+	loc_env%dt(t) = minval(dt_min, mask=ac)
+
     !!update droplet classes
     do d=1, n_dc
   	  if(ac(d))then
@@ -334,13 +357,7 @@ subroutine droplet_model
   	    drop_mod(d)%x(t) = drop_mod(d)%x(t-1) + (drop_mod(d)%V_x(t-1)*loc_env%dt(t-1))
   	    !update z-position
   	    drop_mod(d)%z(t) = drop_mod(d)%z(t-1) - (drop_mod(d)%V_z(t-1)*loc_env%dt(t-1))
-  	    !compute Uz
-		if(drop_mod(d)%z(t) > 0._i_kind)then
-		  drop_mod(d)%Uz(t) = wind_profile(drop_mod(d)%z(t))
-		else
-		  drop_mod(d)%Uz(t) = 0._i_kind
-		end if
-		!update x-velocity
+  	    !update x-velocity
   	    if(abs(env_dat%U_wind-drop_mod(d)%V_x(t-1)) < 0.0001_i_kind)then
 		  drop_mod(d)%V_x(t) = env_dat%U_wind
 		else
@@ -398,33 +415,82 @@ subroutine droplet_model
 	    !calculate distribution above ground for resolution
         drop_mod(d)%dag_res_chg(t) = drop_mod(d)%dag_res(t)-drop_mod(d)%dag_res(t-1)
 		
-  	    if(vv(d))then
-  	      !!time step width estimation
-  	      if (.not. abs(drop_mod(d)%V_z(t)) > 0._i_kind) then
-	        dt_tmp = dt_min
+		! puff slices
+    	do s = 1, N_slices
+          ! vertical position of slice
+          drop_mod(d)%puff_slc%z(t,s) = drop_mod(d)%z(t) + (slice_multi(s) * drop_mod(d)%sigma_v(t))
+      
+          ! wind speed at slice height
+          drop_mod(d)%puff_slc%Uz(t,s) = wind_profile(drop_mod(d)%puff_slc%z(t,s))
+      
+          ! initialize travelled distance (none yet)
+          drop_mod(d)%puff_slc%x_trav(t,s) = drop_mod(d)%puff_slc%x_trav(t-1,s) + drop_mod(d)%puff_slc%Uz(t,s) * loc_env%dt(t-1)
+      
+          ! horizontal dispersion at t=0 (zero or small epsilon)
+          drop_mod(d)%puff_slc%sigma_h_out(t,s) = drop_mod(d)%puff_slc%sigma_h_out(t-1,s) + (souton_sigma_h(env_dat%sig_h,drop_mod(d)%time(t),drop_mod(d)%puff_slc%x_trav(t,s))-souton_sigma_h(env_dat%sig_h,drop_mod(d)%time(t-1),drop_mod(d)%puff_slc%x_trav(t-1,s)))
+        end do
+		
+		! indexing for interpolation step
+    	drop_mod(d)%z_idx(t,1) = max(1, min(maxloc(drop_mod(d)%puff_slc%z(t,:), dim=1, mask=drop_mod(d)%puff_slc%z(t,:) <= control_dat%z_0), N_slices-1))
+        drop_mod(d)%z_idx(t,2) = drop_mod(d)%z_idx(t,1) + 1
+		
+		! update puff dimensions
+        ! bottom (first contact)
+        if (abs(drop_mod(d)%puff_dim%t1) < 1e-6_i_kind) then
+            if (drop_mod(d)%puff_slc%z(t,1) < control_dat%z_0) then
+                drop_mod(d)%puff_dim%t1 = drop_mod(d)%time(t)
+            end if
+        end if
+        
+        ! assigne x and y limits
+		drop_mod(d)%puff_dim%x_min = min( drop_mod(d)%puff_dim%x_min, minval(drop_mod(d)%puff_slc%x_trav(t,(/drop_mod(d)%z_idx(t,1),drop_mod(d)%z_idx(t,2)/)) - drop_mod(d)%puff_slc%sigma_h_out(t,(/drop_mod(d)%z_idx(t,1),drop_mod(d)%z_idx(t,2)/)) * 3._i_kind))
+        drop_mod(d)%puff_dim%x_max = max( drop_mod(d)%puff_dim%x_max, maxval(drop_mod(d)%puff_slc%x_trav(t,(/drop_mod(d)%z_idx(t,1),drop_mod(d)%z_idx(t,2)/)) + drop_mod(d)%puff_slc%sigma_h_out(t,(/drop_mod(d)%z_idx(t,1),drop_mod(d)%z_idx(t,2)/)) * 3._i_kind))
+        drop_mod(d)%puff_dim%y_max = max( drop_mod(d)%puff_dim%y_max, maxval(drop_mod(d)%puff_slc%sigma_h_out(t,(/drop_mod(d)%z_idx(t,1),drop_mod(d)%z_idx(t,2)/)) * 3._i_kind))
+
+        !determine time step width
+		if(vv(d)) then
+		  !calculate dt's
+		  dt_vel(d) = abs(drop_mod(d)%V_z(t)/drop_mod(d)%dV_z_dt(t))/fract_limit
+		  dt_mass(d) = abs(drop_mod(d)%m_h2o(t) / drop_mod(d)%dm_h2o_dt(t))/fract_limit
+		  if(drop_mod(d)%V_x(t) < 1e-3)then
+		    dt_dist(d) = 1._i_kind
 		  else
-		    dt_tmp = (drop_mod(d)%V_z(t)/abs(drop_mod(d)%dV_z_dt(t)))/1000._i_kind
+		    dt_dist(d) = control_dat%max_dist_step / drop_mod(d)%V_x(t)
 		  end if
-  	      if(.not. abs(dt_tmp) > 0._i_kind) dt_tmp = dt_min
-  	      drop_mod(d)%dt(t) = dt_tmp
-		  
-  	      !delta time
-		  if(drop_mod(d)%dt(t) < loc_env%dt(t))then
-  	        loc_env%dt(t) = drop_mod(d)%dt(t)
-  	      end if
-		  
 		  !check if velocity is still different from direct solution
 		  if(abs((drop_mod(d)%V_z(t)-g*drop_mod(d)%tau_m(t))/drop_mod(d)%V_z(t)) < 0.001_i_kind)then
 		    vv(d) = .false.
 		  end if
+		  
+		  !set minimal dt
+		  dt_min(d) = max(minval((/dt_vel(d),dt_mass(d),dt_dist(d)/)),1e-6)
+		else
+		  !calculate dt_mass
+		  dt_mass(d) = abs(drop_mod(d)%m_h2o(t) / drop_mod(d)%dm_h2o_dt(t))/fract_limit
+		  
+		  !set minimal dt
+		  dt_min(d) = max(minval((/dt_mass(d),dt_dist(d)/)),1e-6)
 		end if
-  	    
-  	    !check if z-position if still above threshold
-  	    if(all((/(drop_mod(d)%dag_res(t-1) < 0.0001_i_kind)/)))then
-  	      ac(d) = .false.
+		
+		!check for exit conditions
+		if (t == s_max) then
+		  exit_code(d) = 1
+		else if (drop_mod(d)%time(t) > control_dat%max_time) then
+		  exit_code(d) = 2
+		else if (drop_mod(d)%puff_slc%z(t,N_slices) <= control_dat%z_0) then
+		  exit_code(d) = 3
+		else if (minval(drop_mod(d)%puff_slc%x_trav(t,:) - drop_mod(d)%puff_slc%sigma_h_out(t,:) * 3._i_kind) > control_dat%max_dist) then
+		  exit_code(d) = 4
+		end if
+		
+		!execute exit logic
+		if (exit_code(d) /= 0) then
+		  ac(d) = .false.
   	  	  iter_vec(d) = t
-  	    end if
-  	  end if
+		  drop_mod(d)%puff_dim%t2 = drop_mod(d)%time(t-1)
+		end if
+		
+	  end if
     end do
     
     
@@ -458,67 +524,23 @@ subroutine droplet_model
   	  end if
     end do
 	
-	
-	!!calculate wind speed in dependency of z
-    do d=1, n_dc
-      !calculate wind speed
-	  if(drop_mod(d)%z(t) >= control_dat%z_0)then
-	    !wind speed
-	    if(drop_mod(d)%z(t) >= env_dat%Hv)then
-	      drop_mod(d)%Uz(t) = (env_dat%U_fric/Kc)*log((drop_mod(d)%z(t)-env_dat%d)/env_dat%z0)
-	    else
-	      drop_mod(d)%Uz(t) = env_dat%Uh*exp((env_dat%LAI/2._i_kind)*((drop_mod(d)%z(t)/env_dat%Hv)-1._i_kind))
-	    end if
-	    !travelled distance
-	    drop_mod(d)%Ud(t) = drop_mod(d)%Uz(t) * loc_env%dt(t)
-	  end if
-    end do
-	
-	!determine x dependent of z_0
-	do d=1, n_dc
-	  !reset vectors
-	  z = 0._i_kind
-	  U = 0._i_kind
-	  
-	  !determine z position
-	  z = drop_mod(d)%z(t) + alpha * drop_mod(d)%sigma_v(t)
-	  
-	  !determine wind speed
-	  do i=1, size(z)
-	    if(z(i) > 0._i_kind)then
-		  U(i) = wind_profile(z(i))
-		else
-		  U(i) = wind_profile(0._i_kind)
-		end if
-	  end do
-	  
-	  !compute x
-	  drop_mod(d)%x_s(t,:) = drop_mod(d)%x_s(t-1,:) + U*loc_env%dt(t)
-	  
-	  !interpolate x_mean
-	  if(any(z < control_dat%z_0) .and. any(z > control_dat%z_0))then
-	    drop_mod(d)%x_mean(t) = interpolate(z,drop_mod(d)%x_s(t,:),control_dat%z_0)
-	  else
-	    drop_mod(d)%x_mean(t) = 0._i_kind
-	  end if
-	  !compute sigma_h
-	  drop_mod(d)%sigma_h(t) = souton_sigma_h(env_dat%sig_h,loc_env%time(t),(loc_env%time(t)*env_dat%U_wind))
-	end do	
-	
 	!calculate energy losst due to evaporation
 	loc_env%d_E_h2o_evap(t) = -(loc_env%d_m_h2o_evap(t)*latent_heat_of_vaporization(loc_env%T_sys_K(t))) + ((loc_env%T_wb_C(t)+K_0)*loc_env%d_m_h2o_evap(t)*Cp_h2o)
 	
-	!increase time step width
-	if(loc_env%time(t) >= 300._i_kind)then
-	  dt_min = 1._i_kind
-	else if(loc_env%time(t) >= 60._i_kind)then
-	  dt_min = 0.1_i_kind
-	else if(loc_env%time(t) >= 5._i_kind)then
-	  dt_min = 0.01_i_kind
-	end if	
-	
 	!update t
 	t = t+1
+  end do
+  
+  !limit puff_dim to user inputs
+  do d=1, n_dc
+    ratio = abs(drop_mod(d)%puff_dim%x_min)/abs(drop_mod(d)%puff_dim%x_max)
+	if(d == 1)then
+	  drop_mod(d)%puff_dim%x_min = max(drop_mod(d)%puff_dim%x_min, (-control_dat%max_dist*ratio))
+	else
+	  drop_mod(d)%puff_dim%x_min = max(drop_mod(d)%puff_dim%x_min, (-control_dat%max_dist*ratio), drop_mod(d-1)%puff_dim%x_min)
+	end if
+	drop_mod(d)%puff_dim%x_max = min(drop_mod(d)%puff_dim%x_max, control_dat%max_dist)
+	drop_mod(d)%puff_dim%y_max = min(drop_mod(d)%puff_dim%y_max, (control_dat%max_dist/2._i_kind))	
   end do
   
   !limit data point count in droplet models to last valid execution
@@ -557,11 +579,11 @@ subroutine droplet_model
   drop_mod(d)%dag_res = drop_mod(d)%dag_res(sel_vec)
   drop_mod(d)%dag_res_chg = drop_mod(d)%dag_res_chg(sel_vec)
   drop_mod(d)%dt = drop_mod(d)%dt(sel_vec)
-  drop_mod(d)%Uz = drop_mod(d)%Uz(sel_vec)
-  drop_mod(d)%Ud = drop_mod(d)%Ud(sel_vec) 
-  drop_mod(d)%x_mean = drop_mod(d)%x_mean(sel_vec)
-  drop_mod(d)%sigma_h = drop_mod(d)%sigma_h(sel_vec)
   drop_mod(d)%sigma_v = drop_mod(d)%sigma_v(sel_vec)
+  drop_mod(d)%puff_slc%z = drop_mod(d)%puff_slc%z(sel_vec,:)
+  drop_mod(d)%puff_slc%Uz = drop_mod(d)%puff_slc%Uz(sel_vec,:)
+  drop_mod(d)%puff_slc%x_trav = drop_mod(d)%puff_slc%x_trav(sel_vec,:)
+  drop_mod(d)%puff_slc%sigma_h_out = drop_mod(d)%puff_slc%sigma_h_out(sel_vec,:)
   end do
   
   !local environment
@@ -594,7 +616,7 @@ subroutine droplet_model
   loc_env%D_h2o_f = loc_env%D_h2o_f(sel_vec)
   loc_env%Sc_h2o_f = loc_env%Sc_h2o_f(sel_vec)
   loc_env%dt = loc_env%dt(sel_vec)
-      
+  
   print *, 'droplet model run successful'
   
   end subroutine droplet_model

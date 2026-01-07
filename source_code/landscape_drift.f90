@@ -37,21 +37,12 @@ subroutine landscape_drift
   
   print *, 'calculating landsape drift pattern'
   
+  !flip y coordinates
+  drift_pattern%data = drift_pattern%data(drift_pattern%header%nrows:1:-1, :)
+
   !check if landscape raster cellsize is unequal to 1
-  if(control_dat%cellsize /= 1)then
-    !creat ascii grid with suiting cellsize
-	res_i = int(control_dat%cellsize)
-	res_r = real(control_dat%cellsize,i_kind)
-	tmp_1 = create_ascii_grid(res_i, res_i, (-res_r/2._i_kind), (-res_r/2._i_kind), 1._i_kind)
-	
-	!transforme to matrix
-	tmp_1_mat = ascii_grid_to_llz(tmp_1)
-	
-	!call add_ascii_grid_at
-	tmp_2 = add_ascii_grid_at(drift_pattern,tmp_1_mat)
-	
-	!scale to target resolution
-	drift_pattern = rescale_ascii_grid_centered(tmp_2, res_r, 'sum')	
+  if (control_dat%cellsize /= 1._i_kind) then
+    !drift_pattern = rescale_drift_pattern_fast(drift_pattern, control_dat%cellsize)
   end if
   
   !loop over all field input raster
@@ -59,20 +50,14 @@ subroutine landscape_drift
     !read landscape_input_raster
 	landscape_input_raster = read_ascii_grid(in_files%landscape_file_name(i))
 	
-	!convert landscape data to matrix
-    landscape_input_matrix_tmp = ascii_grid_to_llz(landscape_input_raster)
-    
-    !select all cells with a value of 1
-    landscape_input_matrix = landscape_input_matrix_tmp((pack([(i,i=1,size(landscape_input_matrix_tmp(:,3)))], mask = (abs(landscape_input_matrix_tmp(:,3)-1._i_kind) < 1.e-5_i_kind))),:)
-    
-    !generate temporal landscape_drift_raster
-    tmp_raster = add_ascii_grid_at(drift_pattern,landscape_input_matrix)
+	!generate temporal landscape_drift_raster
+	tmp_raster = add_ascii_grid_landscape(landscape_input_raster, drift_pattern)
 	
 	!add to output raster
 	if(i == 1)then
 	  landscape_drift_raster = tmp_raster
 	else
-	  landscape_drift_raster = add_ascii_grid(landscape_drift_raster,tmp_raster)
+	  landscape_drift_raster = add_ascii_grid_fast(landscape_drift_raster,tmp_raster)
 	end if
 	
 	print *, 'finished field', i

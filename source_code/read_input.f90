@@ -25,7 +25,7 @@ subroutine read_input
       
   implicit none
   integer :: i 														![-]					|counter
-  real(i_kind), dimension(11) :: env_in								![-]					|temporal input array
+  real(i_kind), dimension(12) :: env_in								![-]					|temporal input array
   real(i_kind), dimension(14) :: app_in								![-]					|temporal input array
   character(len=60),dimension(2) :: con_in_cha1						![-]					|temporal input array
   character(len=60),dimension(:), allocatable :: con_in_cha2		![-]					|temporal input array
@@ -78,6 +78,7 @@ subroutine read_input
   env_dat%z0 = env_in(9)
   env_dat%Hv = env_in(10)
   env_dat%LAI = env_in(11)
+  env_dat%k_skew = env_in(12)
   
   !!read droplet distribution
   nlines = 0

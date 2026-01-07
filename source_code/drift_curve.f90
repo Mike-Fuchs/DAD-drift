@@ -24,7 +24,6 @@ subroutine drift_curve
   use ascii_grid_module
   
   implicit none
-  type(ascii_grid) :: drift_curve_raster										![-]					|drift curve raster
   real(i_kind), dimension(:,:), allocatable :: field_matrix						![-]					|field matrix
   real(i_kind), dimension(:,:), allocatable :: drift_curve_raster_matrix		![-]					|drift curve raster matrix
   real(i_kind), dimension(:), allocatable :: lat								![m]					|vector of lateral coordinates
@@ -46,16 +45,16 @@ subroutine drift_curve
   field_matrix(:,1:2) = expand_grid(lat,long)
   
   !add pattern to field
-  drift_curve_raster = add_ascii_grid_at(drift_pattern,field_matrix)
-  
-  !create xyz matrix of drift raster
-  drift_curve_raster_matrix = ascii_grid_to_llz(drift_curve_raster)
+  drift_curve_raster_matrix = add_ascii_grid_at_fast(drift_pattern,field_matrix)
   
   !get the middel of the field at lat = 50
   drift_curve_matrix = drift_curve_raster_matrix(pack([(i,i=1,size(drift_curve_raster_matrix(:,1)))], mask = (abs(drift_curve_raster_matrix(:,1) - real(nint((app_dat%f_length/2._i_kind)),i_kind)) < 1e-6_i_kind)),2:3)
   
   !calculate drift as fraction
   drift_curve_matrix(:,2) = drift_curve_matrix(:,2) / (app_dat%app_rate/10000._i_kind)
+  
+  ! remove zero deposition
+  drift_curve_matrix = drift_curve_matrix(pack([(i,i=1,size(drift_curve_matrix(:,2)))], mask = (drift_curve_matrix(:,2) > 1e-30_i_kind)), :)
   
   !flip distance to be positive
   drift_curve_matrix(:,1) = drift_curve_matrix(:,1) * (-1._i_kind)

@@ -60,11 +60,7 @@ subroutine application_initialisation
   if (abs(app_dat%app_rate_mha +99._i_kind) < 1e-6_i_kind) then
     app_dat%app_rate_mha = app_dat%app_rate / app_dat%c_solution
   end if
-  
-  if(control_dat%dev_mode)then
-    print *, app_dat%app_rate_mh, app_dat%app_rate_mha, app_dat%app_rate, app_dat%rho_solution, app_dat%V_initial, app_dat%V_horizontal
-  end if
-  
+   
   print *, 'application initialisation successful'
   
   end subroutine application_initialisation

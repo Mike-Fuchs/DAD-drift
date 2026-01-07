@@ -1,0 +1,25 @@
+FC = ifx
+FFLAGS = /O3 /free /heap-arrays
+PROJECT = DAD-drift_v1.1.exe
+
+SRC = constants_module.f90 data_module.f90 header_module.f90 file_module.f90 \
+      functions_module.f90 ascii_grid_module.f90 complex_functions_module.f90 \
+      read_input.f90 environment_initialisation.f90 application_initialisation.f90 \
+      droplet_model_allo.f90 droplet_model.f90 predict_drift_pattern.f90 \
+      landscape_drift.f90 drift_curve.f90 write_output.f90 main.f90
+
+OBJ = $(SRC:.f90=.obj)
+
+# --- Compilation rule for each .f90 file ---
+.f90.obj:
+	$(FC) $(FFLAGS) /c $<
+
+# --- Linking rule ---
+main: $(OBJ)
+	$(FC) $(FFLAGS) /static /exe:$(PROJECT) $(OBJ)
+
+clean:
+	del *.obj *.mod *.optrpt
+
+start:
+	call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat"

@@ -73,13 +73,13 @@ subroutine write_output
 	  write (tmp_head,128) j
 	  open(unit=151, file='output/drop_mod_'//trim(tmp_head)//'.txt', status='replace', action='write')
 	  write(151,129) 'time', 'diameter', 'volume', 'm_h2o', 'm_AI', 'fract_AI', 'x_h2o', 'x', 'z', 'V_x', 'V_z', 'Re_s', 'f', 'tau_m', 'Re_f', 'Sh_h2o_f', 'F_h2o', &
-					 'F_AI', 'dV_x_dt', 'dV_z_dt', 'dm_h2o_dt', 'dm_AI_dt', 'dm_h2o', 'dm_AI', 'dm_h2o_a', 'V_s', 'edv', 'dag', 'dag_res', 'dag_res_chg', 'dt', 'Uz', 'x_mean', 'sigma_v', 'sigma_h' 
+					 'F_AI', 'dV_x_dt', 'dV_z_dt', 'dm_h2o_dt', 'dm_AI_dt', 'dm_h2o', 'dm_AI', 'dm_h2o_a', 'V_s', 'edv', 'dag', 'dag_res', 'dag_res_chg', 'dt', 'sigma_v' 
 	  do i=1,nrow_dev,10
 	    write(151,130) drop_mod(j)%time(i), drop_mod(j)%diameter(i), drop_mod(j)%volume(i), drop_mod(j)%m_h2o(i), drop_mod(j)%m_AI(i), drop_mod(j)%fract_AI(i), drop_mod(j)%x_h2o(i), &
 					   drop_mod(j)%x(i), drop_mod(j)%z(i), drop_mod(j)%V_x(i), drop_mod(j)%V_z(i), drop_mod(j)%Re_s(i), drop_mod(j)%f(i), drop_mod(j)%tau_m(i), &
 					   drop_mod(j)%Re_f(i), drop_mod(j)%Sh_h2o_f(i), drop_mod(j)%F_h2o(i), drop_mod(j)%F_AI(i), drop_mod(j)%dV_x_dt(i), drop_mod(j)%dV_z_dt(i), drop_mod(j)%dm_h2o_dt(i), &
 					   drop_mod(j)%dm_AI_dt(i), drop_mod(j)%dm_h2o(i), drop_mod(j)%dm_AI(i), drop_mod(j)%dm_h2o_a(i), drop_mod(j)%V_s(i), drop_mod(j)%edv(i), drop_mod(j)%dag(i), &
-					   drop_mod(j)%dag_res(i), drop_mod(j)%dag_res_chg(i), drop_mod(j)%dt(i), drop_mod(j)%Uz(i), drop_mod(j)%x_mean(i), drop_mod(j)%sigma_v(i), drop_mod(j)%sigma_h(i) 
+					   drop_mod(j)%dag_res(i), drop_mod(j)%dag_res_chg(i), drop_mod(j)%dt(i), drop_mod(j)%sigma_v(i)
 	  end do
 	  close(151)
 	end do

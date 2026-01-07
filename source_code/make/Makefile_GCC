@@ -1,6 +1,7 @@
 FC=gfortran
-FFLAGS= -O1 -ffree-line-length-none -fdec-math
-PROJECT= DAD-drift_v1.0.exe
+FFLAGS = -O3 -funroll-loops -ffree-line-length-none -fdec-math
+
+PROJECT= DAD-drift_v1.1.exe
 
 SRC=constants_module.f90 data_module.f90 header_module.f90 file_module.f90 functions_module.f90 ascii_grid_module.f90 complex_functions_module.f90 \
     read_input.f90 environment_initialisation.f90 application_initialisation.f90 droplet_model_allo.f90 droplet_model.f90 predict_drift_pattern.f90 \

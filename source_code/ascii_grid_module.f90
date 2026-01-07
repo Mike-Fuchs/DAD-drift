@@ -22,7 +22,7 @@ module ascii_grid_module
   implicit none
   private
   public :: header, ascii_grid, drift_pattern, landscape_drift_raster, landscape_input_raster, grid_list, read_ascii_header, read_ascii_grid, write_ascii_grid, create_ascii_grid, llz_to_ascii_grid, &
-			llz_to_ascii_grid_with_ll, ascii_grid_to_llz, add_ascii_grid, rescale_ascii_grid, rescale_ascii_grid_centered, add_ascii_grid_at
+			llz_to_ascii_grid_with_ll, ascii_grid_to_llz, add_ascii_grid, rescale_ascii_grid, rescale_ascii_grid_centered, add_ascii_grid_at, add_ascii_grid_at_fast, add_ascii_grid_fast, add_ascii_grid_landscape
   
   !define header
   type header
@@ -108,9 +108,9 @@ module ascii_grid_module
 	  raster%header%yllcorner = real(nint(raster%header%yllcorner - raster%header%cellsize/2._i_kind),i_kind) + raster%header%cellsize/2._i_kind
 	  
 	  allocate(raster%data(raster%header%nrows,raster%header%ncols))
-	  do i=1,raster%header%nrows
-	    read(1000,*) raster%data(i,:)
-	  end do
+	  do i = raster%header%nrows, 1, -1
+        read(1000,*) raster%data(i,:)
+      end do
 	  close(1000)
 	    
 	end function read_ascii_grid
@@ -141,9 +141,9 @@ module ascii_grid_module
 	  write(1001,'(A13,A20)') 		header_names%nodata_value, adjustl(dummy)
 	  
 	  if(size(raster%data) > 0)then
-	    do i=1,raster%header%nrows
-	      write(1001,*) raster%data(i,:)
-	    end do
+	    do i = raster%header%nrows, 1, -1
+          write(1001,*) raster%data(i,:)
+        end do
 	  end if
 	  close(1001)
 	  	    
@@ -393,7 +393,76 @@ module ascii_grid_module
 	  
 20	end function add_ascii_grid
 	
-	
+    function add_ascii_grid_fast (raster1, raster2) result(raster3)
+      !! Corrected to match codebase convention:
+      !!  - (0,0) = lower-left corner
+      !!  - row index grows northward (up)
+      !!  - consistent with read_ascii_grid centering logic
+    
+      implicit none
+    
+      type(ascii_grid), intent(in) :: raster1
+      type(ascii_grid), intent(in) :: raster2
+      type(ascii_grid) :: raster3
+    
+      real(i_kind) :: cell
+      real(i_kind) :: x_min, y_min, x_max, y_max
+      integer :: nrows_out, ncols_out
+      integer :: row_off1, col_off1, row_off2, col_off2
+      integer :: i1_start, i1_end, j1_start, j1_end
+      integer :: i2_start, i2_end, j2_start, j2_end
+    
+      if (abs(raster1%header%cellsize - raster2%header%cellsize) > 1.e-6_i_kind) then
+         print *, '⚠️ Warning: cellsize mismatch in add_ascii_grid_fast'
+      end if
+    
+      cell = raster1%header%cellsize
+    
+      !–– Determine full extent (cell centers)
+      x_min = min(raster1%header%xllcorner, raster2%header%xllcorner)
+      y_min = min(raster1%header%yllcorner, raster2%header%yllcorner)
+      x_max = max(raster1%header%xllcorner + (raster1%header%ncols - 1)*cell, &
+                  raster2%header%xllcorner + (raster2%header%ncols - 1)*cell)
+      y_max = max(raster1%header%yllcorner + (raster1%header%nrows - 1)*cell, &
+                  raster2%header%yllcorner + (raster2%header%nrows - 1)*cell)
+    
+      ncols_out = int((x_max - x_min)/cell + 1.5_i_kind)
+      nrows_out = int((y_max - y_min)/cell + 1.5_i_kind)
+    
+      raster3%header%ncols = ncols_out
+      raster3%header%nrows = nrows_out
+      raster3%header%xllcorner = x_min
+      raster3%header%yllcorner = y_min
+      raster3%header%cellsize  = cell
+      raster3%header%nodata_value = raster1%header%nodata_value
+    
+      allocate(raster3%data(nrows_out, ncols_out))
+      raster3%data = 0._i_kind
+    
+      !–– Offsets using bottom-left origin (no inversion)
+      row_off1 = int((raster1%header%yllcorner - raster3%header%yllcorner)/cell + 0.5_i_kind)
+      col_off1 = int((raster1%header%xllcorner - raster3%header%xllcorner)/cell + 0.5_i_kind)
+      row_off2 = int((raster2%header%yllcorner - raster3%header%yllcorner)/cell + 0.5_i_kind)
+      col_off2 = int((raster2%header%xllcorner - raster3%header%xllcorner)/cell + 0.5_i_kind)
+    
+      !–– insert raster1
+      i1_start = row_off1 + 1
+      i1_end   = i1_start + raster1%header%nrows - 1
+      j1_start = col_off1 + 1
+      j1_end   = j1_start + raster1%header%ncols - 1
+      raster3%data(i1_start:i1_end, j1_start:j1_end) = raster3%data(i1_start:i1_end, j1_start:j1_end) + raster1%data
+    
+      !–– insert raster2
+      i2_start = row_off2 + 1
+      i2_end   = i2_start + raster2%header%nrows - 1
+      j2_start = col_off2 + 1
+      j2_end   = j2_start + raster2%header%ncols - 1
+      raster3%data(i2_start:i2_end, j2_start:j2_end) = raster3%data(i2_start:i2_end, j2_start:j2_end) + raster2%data
+    
+    end function add_ascii_grid_fast
+
+
+
 	function rescale_ascii_grid (raster1, target_res, methode) result(raster2)
 	  !! ~~~~ description ~~~~
 	  !! This function will rescale a ascii grid raster
@@ -700,5 +769,224 @@ module ascii_grid_module
 	  if(allocated(col_off)) deallocate(col_off)
 		
 	end function add_ascii_grid_at
+	
+	
+    function add_ascii_grid_at_fast (raster_in, matrix_in) result(matrix_out)
+       !! --------------------------------------------------------------------
+       !! Optimized version of add_ascii_grid_at
+       !! Performs same operation as original but:
+       !!   – avoids temporary allocations
+       !!   – uses direct integer index arithmetic
+       !!   – returns matrix_out directly (lat, lon, value)
+       !! Works under IFX and GFORTRAN, single-thread safe.
+       !! --------------------------------------------------------------------
+    
+       implicit none
+    
+       !–– input / output ––
+       type(ascii_grid), intent(in) :: raster_in          				! deposition pattern
+       real(i_kind), dimension(:,:), intent(in) :: matrix_in 			! placement coordinates
+       real(i_kind), dimension(:,:), allocatable :: matrix_out			! flattened result
+    
+       !–– locals ––
+       integer :: nrows_in, ncols_in, nrows_out, ncols_out
+       real(i_kind) :: x_min, y_min, x_max, y_max, cell
+       real(i_kind) :: xll_out, yll_out
+       integer :: i, r_idx, c_idx, npoints
+       real(i_kind), allocatable :: data_out(:,:)
+    
+       !–– grid setup ––
+       cell     = raster_in%header%cellsize
+       nrows_in = raster_in%header%nrows
+       ncols_in = raster_in%header%ncols
+    
+       !–– bounds of placement matrix ––
+       y_min = minval(matrix_in(:,1))
+       y_max = maxval(matrix_in(:,1))
+       x_min = minval(matrix_in(:,2))
+       x_max = maxval(matrix_in(:,2))
+    
+       !–– determine output grid geometry
+       nrows_out = nrows_in + int((y_max - y_min)/cell) + 1
+       ncols_out = ncols_in + int((x_max - x_min)/cell) + 1
+       yll_out   = raster_in%header%yllcorner + y_min
+       xll_out   = raster_in%header%xllcorner + x_min
+    
+       !–– allocate accumulation field
+       allocate(data_out(nrows_out, ncols_out))
+       data_out = 0._i_kind
+    
+       !–– overlay each placement
+       do i = 1, size(matrix_in,1)
+          ! Compute target indices (y reversed like ASCII raster convention)
+          r_idx = nrows_out - int((matrix_in(i,1) - y_min) / cell) - nrows_in + 1
+          c_idx = int((matrix_in(i,2) - x_min) / cell) + 1
+    
+          ! Bounds check – ensure full patch fits in output grid
+          if (r_idx >= 1 .and. r_idx + nrows_in - 1 <= nrows_out .and. &
+              c_idx >= 1 .and. c_idx + ncols_in - 1 <= ncols_out) then
+             data_out(r_idx:r_idx+nrows_in-1, c_idx:c_idx+ncols_in-1) = &
+                  data_out(r_idx:r_idx+nrows_in-1, c_idx:c_idx+ncols_in-1) + raster_in%data
+          end if
+       end do
+    
+       !–– flatten to (y, x, value)
+       npoints = nrows_out * ncols_out
+       allocate(matrix_out(npoints, 3))
+    
+       do i = 1, npoints
+          matrix_out(i,1) = yll_out + ((nrows_out - 1) - (i - 1)/ncols_out) * cell + cell/2._i_kind
+          matrix_out(i,2) = xll_out + mod(i - 1, ncols_out) * cell + cell/2._i_kind
+          matrix_out(i,3) = data_out((i - 1)/ncols_out + 1, mod(i - 1, ncols_out) + 1)
+       end do
+    
+       deallocate(data_out)
+    
+    end function add_ascii_grid_at_fast
+
+
+
+    function add_ascii_grid_landscape(landscape_in, drift_pattern) result(raster_out)
+      !! ~~~~ description ~~~~
+      !! Combines raster selection and stitching into one pass.
+      !! Finds all cells with value ≈ 1 in landscape_in and
+      !! adds drift_pattern at each cell position.
+      !!
+      !! Output: full stitched ascii_grid (same cellsize)
+      !! Compatible with new bottom-up (yllcorner-based) logic.
+    
+      implicit none
+    
+      !–– input / output ––
+      type(ascii_grid), intent(in) :: landscape_in
+      type(ascii_grid), intent(in) :: drift_pattern
+      type(ascii_grid)             :: raster_out
+    
+      !–– locals ––
+      real(i_kind) :: cell
+      integer :: nrows_land, ncols_land
+      integer :: nrows_pat,  ncols_pat
+      real(i_kind) :: xll_min, yll_min, xll_max, yll_max
+      real(i_kind) :: xpat_min, ypat_min
+	  real(i_kind) :: x_pos, y_pos
+      integer :: nrows_out, ncols_out
+      integer :: r, c, i_add
+      integer :: r_start, r_end, c_start, c_end
+      integer :: hits
+      
+      !–– setup
+      cell       = landscape_in%header%cellsize
+      nrows_land = landscape_in%header%nrows
+      ncols_land = landscape_in%header%ncols
+      nrows_pat  = drift_pattern%header%nrows
+      ncols_pat  = drift_pattern%header%ncols
+    
+      ! --- compute drift pattern 0,0 offset
+	  xpat_min = drift_pattern%header%xllcorner + 0.5_i_kind*cell
+	  ypat_min = drift_pattern%header%yllcorner + 0.5_i_kind*cell
+	  
+	  !–– compute total bounds (extend by pattern size)
+      xll_min = landscape_in%header%xllcorner + xpat_min
+      yll_min = landscape_in%header%yllcorner + ypat_min
+      xll_max = xll_min + (ncols_land+ncols_pat)*cell
+      yll_max = yll_min + (nrows_land+nrows_pat)*cell
+    
+      ncols_out = int((xll_max - xll_min)/cell + 1.5_i_kind)
+      nrows_out = int((yll_max - yll_min)/cell + 1.5_i_kind)
+    
+      raster_out%header%ncols = ncols_out
+      raster_out%header%nrows = nrows_out
+      raster_out%header%xllcorner = xll_min
+      raster_out%header%yllcorner = yll_min
+      raster_out%header%cellsize  = cell
+      raster_out%header%nodata_value = landscape_in%header%nodata_value
+    
+      allocate(raster_out%data(nrows_out, ncols_out))
+      raster_out%data = 0._i_kind
+    
+      !–– main loop: place pattern wherever landscape cell ≈ 1
+      do r = 1, nrows_land
+         do c = 1, ncols_land
+            if (abs(landscape_in%data(r,c) - 1._i_kind) < 1.e-5_i_kind) then
+               ! compute physical coordinates of this cell’s center
+               y_pos = landscape_in%header%yllcorner + (r - 0.5_i_kind) * cell
+               x_pos = landscape_in%header%xllcorner + (c - 0.5_i_kind) * cell
+      
+               ! translate to output indices
+               r_start = int(((y_pos-(yll_min+0.5_i_kind*cell))/cell) + (ypat_min / cell)) + 1
+               c_start = int(((x_pos-(xll_min+0.5_i_kind*cell))/cell) + (xpat_min / cell)) + 1
+			   r_end   = r_start + nrows_pat - 1
+               c_end   = c_start + ncols_pat - 1
+      
+               if (r_start >= 1 .and. r_end <= nrows_out .and. c_start >= 1 .and. c_end <= ncols_out) then
+                  raster_out%data(r_start:r_end, c_start:c_end) = raster_out%data(r_start:r_end, c_start:c_end) + drift_pattern%data
+               end if
+            end if
+         end do
+      end do
+    
+    end function add_ascii_grid_landscape
+
+!    function rescale_drift_pattern_fast(pattern_in, target_cellsize) result(pattern_out)
+!      !! ---------------------------------------------------------------------------
+!      !! Fast rescaler for drift pattern rasters
+!      !! Replaces the old "create_ascii_grid → add → rescale" pipeline.
+!      !! Works directly in raster space using integer index arithmetic.
+!      !! ---------------------------------------------------------------------------
+!    
+!      implicit none
+!      type(ascii_grid), intent(in) :: pattern_in
+!      real(i_kind), intent(in)     :: target_cellsize
+!      type(ascii_grid)             :: pattern_out
+!    
+!      ! local
+!      integer :: scale_factor, i, j
+!      integer :: new_nrows, new_ncols
+!      real(i_kind), allocatable :: tmp_data(:,:)
+!      real(i_kind) :: ratio
+!    
+!      !–– if already correct resolution, just copy ––
+!      if (abs(pattern_in%header%cellsize - target_cellsize) < 1.e-6_i_kind) then
+!         pattern_out = pattern_in
+!         return
+!      end if
+!    
+!      !–– scaling ratio ––
+!      ratio = pattern_in%header%cellsize / target_cellsize
+!      if (ratio < 1._i_kind) ratio = 1._i_kind / ratio    ! ensure >= 1
+!    
+!      !–– new raster size ––
+!      new_nrows = int(real(pattern_in%header%nrows, i_kind) * ratio)
+!      new_ncols = int(real(pattern_in%header%ncols, i_kind) * ratio)
+!    
+!      allocate(tmp_data(new_nrows, new_ncols))
+!      tmp_data = 0._i_kind
+!    
+!      !–– aggregate / distribute deposition values ––
+!      ! use conservative "sum" scaling — same as rescale_ascii_grid_centered
+!      do i = 1, pattern_in%header%nrows
+!         do j = 1, pattern_in%header%ncols
+!            ! compute target block bounds in output grid
+!            integer :: r1, r2, c1, c2
+!            r1 = int((i-1) * ratio) + 1
+!            r2 = min(int(i * ratio), new_nrows)
+!            c1 = int((j-1) * ratio) + 1
+!            c2 = min(int(j * ratio), new_ncols)
+!            tmp_data(r1:r2, c1:c2) = tmp_data(r1:r2, c1:c2) + pattern_in%data(i,j)
+!         end do
+!      end do
+!    
+!      !–– assemble header ––
+!      pattern_out%header = pattern_in%header
+!      pattern_out%header%cellsize = target_cellsize
+!      pattern_out%header%nrows = new_nrows
+!      pattern_out%header%ncols = new_ncols
+!      allocate(pattern_out%data(new_nrows, new_ncols))
+!      pattern_out%data = tmp_data
+!    
+!      deallocate(tmp_data)
+!    
+!    end function rescale_drift_pattern_fast
+
 	
 end module ascii_grid_module
